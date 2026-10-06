@@ -1,4 +1,4 @@
-// Johor Escape: a tiny local static server with no dependencies.
+// Dive Escape: a tiny local static server with no dependencies.
 // The app calls its APIs straight from the browser, so this only serves ./public.
 // In production the same files are hosted on GitHub Pages.
 const http = require("http");
@@ -32,4 +32,4 @@ http
     else console.error(err);
     process.exit(1);
   })
-  .listen(PORT, () => console.log(`Johor Escape is running at http://localhost:${PORT}`));
+  .listen(PORT, () => console.log(`Dive Escape is running at http://localhost:${PORT}`));

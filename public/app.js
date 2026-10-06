@@ -618,7 +618,7 @@ document.addEventListener("click", (e) => {
 function setBudget(n) {
   state.budget = Math.max(0, Math.min(40, Number.isFinite(n) ? Math.round(n) : 0));
   $("#budget").value = state.budget;
-  try { localStorage.setItem("johor-escape-budget", String(state.budget)); } catch {}
+  try { localStorage.setItem("dive-escape-budget", String(state.budget)); } catch {}
   if (!state.breaks.length) return;
   optimise();
   renderAll();
@@ -630,7 +630,7 @@ $("#budget").addEventListener("change", (e) => setBudget(Number(e.target.value))
 /* ---------- start ---------- */
 async function boot() {
   state.today = sgToday();
-  try { const saved = Number(localStorage.getItem("johor-escape-budget")); if (saved >= 0 && saved <= 40 && localStorage.getItem("johor-escape-budget") !== null) state.budget = saved; } catch {}
+  try { const saved = Number(localStorage.getItem("dive-escape-budget")); if (saved >= 0 && saved <= 40 && localStorage.getItem("dive-escape-budget") !== null) state.budget = saved; } catch {}
   $("#budget").value = state.budget;
 
   const [hol, fc] = await Promise.allSettled([loadHolidays(), loadForecast()]);

@@ -1,6 +1,6 @@
 # Dive Escape
 
-*Escape from CT Hub… to go diving.* A static web app that plans dive trips around Singapore's public holidays. It tells you:
+A static web app that plans dive trips around Singapore's public holidays. It tells you:
 
 - **When to go, and how much leave to take:** every public holiday in the next 12 months, with the longest break you can get for 0 to 5 leave days. Set how many leave days you can spare, and it picks the set of breaks that gives you the most days off.
 - **Go or not:** a verdict for the Malaysian dive islands you can drive to over the Causeway (Tioman, Pulau Aur & Dayang, Redang, the Perhentians). It checks whether the islands are in season, since they close for the northeast monsoon from roughly November to February. Then it checks the rain: the 16-day forecast when your trip is close enough, otherwise the same dates last year.
@@ -16,7 +16,7 @@ It's a static site. The browser calls the open APIs directly, and there are no k
 **Locally:** you need [Node.js](https://nodejs.org) 18 or newer. There's nothing to install.
 
 ```
-cd johor-escape
+cd dive-escape
 npm start
 ```
 
@@ -56,7 +56,7 @@ All four live feeds allow direct browser calls and need no API key. If a feed go
 ## Files
 
 ```
-johor-escape/
+dive-escape/
   public/index.html  page structure
   public/styles.css  sign-gantry look in deep-water blue, light and dark themes
   public/app.js      API calls, break finder, leave optimiser, verdicts, dive guide, cameras
