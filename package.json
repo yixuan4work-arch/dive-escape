@@ -1,0 +1,12 @@
+{
+  "name": "johor-escape",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plan your next long weekend in Johor: fewest leave days, best weather, live checkpoint cameras.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

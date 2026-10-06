@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Johor Escape</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800;900&family=Overpass+Mono:wght@500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="gantry">
+    <div class="gantry-inner">
+      <div class="sign brand">
+        <span class="brand-arrow" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 4 L34 18 H25 V36 H15 V18 H6 Z" fill="currentColor"/></svg>
+        </span>
+        <div>
+          <p class="sign-kicker">From CT Hub to</p>
+          <h1>Johor Escape</h1>
+        </div>
+      </div>
+      <div class="budget">
+        <label for="budget">Leave days I can spare in the next 12 months</label>
+        <div class="stepper">
+          <button type="button" id="bMinus" aria-label="One fewer leave day">−</button>
+          <input id="budget" type="number" min="0" max="40" value="7" inputmode="numeric">
+          <button type="button" id="bPlus" aria-label="One more leave day">+</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="hero" class="hero" aria-live="polite">
+      <p class="muted">Loading Singapore public holidays…</p>
+    </section>
+
+    <section class="block">
+      <div class="sec-head">
+        <h2>Your year of breaks</h2>
+        <div id="planSummary" class="summary"></div>
+      </div>
+      <ul class="legend" aria-label="Calendar key">
+        <li><span class="day hol"></span>Public holiday</li>
+        <li><span class="day wkd"></span>Weekend</li>
+        <li><span class="day leave"></span>Leave day</li>
+        <li><span class="day work"></span>Work day</li>
+      </ul>
+      <div id="breaks" class="breaks"></div>
+    </section>
+
+    <section class="block">
+      <div class="sec-head">
+        <h2>Crossing today?</h2>
+        <p id="camMeta" class="muted">Loading live checkpoint cameras…</p>
+      </div>
+      <div id="cams" class="cams"></div>
+      <h3 class="sub">This weekend's weather</h3>
+      <div id="weekend"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p><b>Data:</b> Singapore public holidays from <a href="https://date.nager.at" target="_blank" rel="noopener">Nager.Date</a> (observed dates; check <a href="https://www.mom.gov.sg/employment-practices/public-holidays" target="_blank" rel="noopener">MOM's official list</a> before you apply for leave).
+    Forecasts and last year's weather from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>.
+    Live checkpoint cameras from LTA via <a href="https://data.gov.sg" target="_blank" rel="noopener">data.gov.sg</a>.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

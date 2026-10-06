@@ -1,0 +1,521 @@
+"use strict";
+
+const MAX_LEAVE = 5;      // most leave days we'll suggest for a single break
+const HORIZON = 366;      // plan this many days ahead
+const SEARCH = 14;        // how far either side of a holiday a break can stretch
+
+const state = {
+  today: "",
+  days: [],
+  breaks: [],
+  chosen: [],        // per break: index into its options, or -1 if skipped
+  custom: false,
+  budget: 7,
+  selected: 0,
+  forecast: null,
+  lastYear: new Map(),
+  verdictToken: "",
+};
+
+/* ---------- helpers ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const parse = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
+const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+const short = (s) => parse(s).toLocaleDateString("en-SG", { weekday: "short", day: "numeric", month: "short" });
+const range = (a, b) => (a === b ? short(a) : `${short(a)} – ${short(b)}`);
+const sgToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const wmo = (c) => c == null ? "–" : c === 0 ? "Clear" : c <= 2 ? "Partly cloudy" : c === 3 ? "Cloudy" : c <= 48 ? "Fog"
+  : c <= 57 ? "Drizzle" : c <= 67 ? "Rain" : c <= 77 ? "Snow" : c <= 82 ? "Showers" : c <= 86 ? "Snow showers" : "Thunderstorms";
+const CHECKPOINT = { woodlands: "Woodlands (the Causeway)", tuas: "Tuas (the Second Link)" };
+
+/* ---------- data: called straight from the browser (all four APIs allow it, no keys) ---------- */
+const DESTINATIONS = [
+  { id: "jb", name: "Johor Bahru city", lat: 1.4655, lon: 103.7578, checkpoint: "woodlands" },
+  { id: "legoland", name: "Legoland & Puteri Harbour", lat: 1.4267, lon: 103.6297, checkpoint: "tuas" },
+  { id: "desaru", name: "Desaru Coast", lat: 1.5517, lon: 104.2520, checkpoint: "woodlands" },
+  { id: "malacca", name: "Malacca", lat: 2.1896, lon: 102.2501, checkpoint: "tuas" },
+];
+// LTA traffic cameras at the two land checkpoints (IDs from the data.gov.sg feed).
+const CAMERAS = {
+  2701: { checkpoint: "woodlands", label: "Woodlands Causeway, towards Johor" },
+  2702: { checkpoint: "woodlands", label: "Woodlands Checkpoint" },
+  4703: { checkpoint: "tuas", label: "Tuas Second Link" },
+  4713: { checkpoint: "tuas", label: "Tuas Checkpoint" },
+};
+const LAT = DESTINATIONS.map((d) => d.lat).join(",");
+const LON = DESTINATIONS.map((d) => d.lon).join(",");
+
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${new URL(url).host} answered ${res.status}.`);
+  return res.json();
+}
+
+// Reuse a response while it's fresh; if the provider fails, fall back to the last good copy.
+const memo = new Map();
+async function cached(key, ttl, load) {
+  const hit = memo.get(key);
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  try {
+    const value = await load();
+    memo.set(key, { at: Date.now(), value });
+    return value;
+  } catch (err) {
+    if (hit) return hit.value;
+    throw err;
+  }
+}
+const shiftYear = (s, n) => { const [y, m, d] = s.split("-"); return iso(new Date(Number(y) + n, m - 1, d)); };
+const points = (raw) => (Array.isArray(raw) ? raw : [raw]);
+
+async function loadHolidays() {
+  const y = Number(state.today.slice(0, 4));
+  const lists = await Promise.all([y, y + 1].map((yr) =>
+    cached(`holidays-${yr}`, 12 * 3600e3, () => getJSON(`https://date.nager.at/api/v3/PublicHolidays/${yr}/SG`))));
+  return lists.flat().map((h) => ({ date: h.date, name: h.name }));
+}
+
+async function loadForecast() {
+  const raw = await cached("forecast", 30 * 60e3, () => getJSON(
+    `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+    `&daily=weather_code,temperature_2m_max,precipitation_probability_max,precipitation_sum&timezone=Asia%2FSingapore&forecast_days=16`));
+  return {
+    destinations: DESTINATIONS.map((d, i) => {
+      const daily = points(raw)[i].daily;
+      return { ...d, days: daily.time.map((date, k) => ({
+        date, code: daily.weather_code[k], tmax: daily.temperature_2m_max[k],
+        rainProb: daily.precipitation_probability_max[k], rainMm: daily.precipitation_sum[k],
+      })) };
+    }),
+  };
+}
+
+async function loadLastYear(start, end) {
+  const from = shiftYear(start, -1);
+  const to = shiftYear(end, -1);
+  const raw = await cached(`lastyear-${from}-${to}`, 24 * 3600e3, () => getJSON(
+    `https://archive-api.open-meteo.com/v1/archive?latitude=${LAT}&longitude=${LON}&start_date=${from}&end_date=${to}` +
+    `&daily=weather_code,temperature_2m_max,precipitation_sum,precipitation_hours&timezone=Asia%2FSingapore`));
+  return {
+    destinations: DESTINATIONS.map((d, i) => {
+      const daily = points(raw)[i].daily;
+      return { ...d, days: daily.time.map((lastYearDate, k) => ({
+        date: addDays(start, k), lastYearDate, code: daily.weather_code[k], tmax: daily.temperature_2m_max[k],
+        rainMm: daily.precipitation_sum[k], rainHours: daily.precipitation_hours[k],
+      })) };
+    }),
+  };
+}
+
+async function loadCamData() {
+  const raw = await cached("cams", 60e3, () => getJSON("https://api.data.gov.sg/v1/transport/traffic-images"));
+  return {
+    cameras: (raw.items?.[0]?.cameras || [])
+      .filter((c) => CAMERAS[c.camera_id])
+      .map((c) => ({ id: c.camera_id, ...CAMERAS[c.camera_id], image: c.image, timestamp: c.timestamp })),
+  };
+}
+const errorHTML = (msg, retry) =>
+  `<div class="error"><p><b>Couldn't load this.</b> ${esc(msg)} Check that your internet connection is on.</p>${retry ? `<button type="button" class="open" data-retry="${retry}">Try again</button>` : ""}</div>`;
+
+/* ---------- calendar + break finder ---------- */
+function buildDays(holidays) {
+  const hol = new Map();
+  holidays.forEach((h) => { if (!hol.has(h.date)) hol.set(h.date, h.name); });
+  const out = [];
+  let d = state.today;
+  for (let i = 0; i < HORIZON + SEARCH + 7; i++) {
+    const wd = parse(d).getDay();
+    out.push({ date: d, wd, hol: hol.get(d) || null, off: wd === 0 || wd === 6 || hol.has(d) });
+    d = addDays(d, 1);
+  }
+  return out;
+}
+
+// For each holiday, find the longest run of days off you can get for 0, 1, 2… leave days.
+function buildBreaks() {
+  const days = state.days;
+  const work = [0];
+  days.forEach((d) => work.push(work[work.length - 1] + (d.off ? 0 : 1)));
+  const anchors = days.map((d, i) => (d.hol && i <= HORIZON ? i : -1)).filter((i) => i >= 0);
+  const groups = new Map();
+
+  for (const a of anchors) {
+    const opts = [];
+    let prevLen = 0;
+    for (let L = 0; L <= MAX_LEAVE; L++) {
+      let best = null;
+      for (let s = Math.max(0, a - SEARCH); s <= a; s++) {
+        for (let e = a; e <= Math.min(days.length - 1, a + SEARCH); e++) {
+          const w = work[e + 1] - work[s];
+          if (w > L) break;
+          const len = e - s + 1;
+          if (!best || len > best.len || (len === best.len && w < best.leave)) best = { s, e, len, leave: w };
+        }
+      }
+      if (best && best.len > prevLen) { opts.push(best); prevLen = best.len; }
+    }
+    const key = `${opts[0].s}-${opts[0].e}`;   // holidays sharing one long weekend form one break
+    if (!groups.has(key)) groups.set(key, { anchors: [], opts: [] });
+    const g = groups.get(key);
+    g.anchors.push(a);
+    g.opts.push(...opts);
+  }
+
+  return [...groups.values()]
+    .map((g) => {
+      const seen = new Set();
+      let prev = 0;
+      const opts = g.opts
+        .filter((o) => { const k = `${o.s}-${o.e}`; if (seen.has(k)) return false; seen.add(k); return true; })
+        .sort((x, y) => x.leave - y.leave || y.len - x.len)
+        .filter((o) => { if (o.len <= prev) return false; prev = o.len; return true; })
+        .map(enrich);
+      const name = [...new Set(g.anchors.map((a) => days[a].hol))].join(" + ");
+      return { name, anchor: g.anchors[0], opts };
+    })
+    .sort((x, y) => x.opts[0].s - y.opts[0].s);
+}
+
+function enrich(o) {
+  const win = state.days.slice(o.s, o.e + 1);
+  return {
+    ...o,
+    id: `${win[0].date}_${win[win.length - 1].date}`,
+    start: win[0].date,
+    end: win[win.length - 1].date,
+    leaveDates: win.filter((d) => !d.off).map((d) => d.date),
+    hols: [...new Set(win.filter((d) => d.hol).map((d) => d.hol))],
+  };
+}
+
+// Pick at most one option per break, with no overlaps, to get the most days off within the leave budget.
+function optimise() {
+  const items = [];
+  state.breaks.forEach((b, bi) => b.opts.forEach((o, oi) => items.push({ bi, oi, s: o.s, e: o.e, v: o.len, w: o.leave })));
+  items.sort((x, y) => x.e - y.e);
+  const n = items.length;
+  const B = state.budget;
+  const prev = items.map((it, i) => { let j = i - 1; while (j >= 0 && items[j].e >= it.s) j--; return j; });
+  const dp = Array.from({ length: n + 1 }, () => new Array(B + 1).fill(0));
+  for (let i = 0; i < n; i++) {
+    const it = items[i];
+    for (let b = 0; b <= B; b++) {
+      let best = dp[i][b];
+      if (it.w <= b) best = Math.max(best, it.v + dp[prev[i] + 1][b - it.w]);
+      dp[i + 1][b] = best;
+    }
+  }
+  // Use the fewest leave days that still reach the best total.
+  let b = 0;
+  while (b < B && dp[n][b] < dp[n][B]) b++;
+  const chosen = state.breaks.map(() => -1);
+  let i = n;
+  while (i > 0) {
+    if (dp[i][b] === dp[i - 1][b]) { i--; continue; }
+    const it = items[i - 1];
+    chosen[it.bi] = it.oi;
+    b -= it.w;
+    i = prev[i - 1] + 1;
+  }
+  state.chosen = chosen;
+  state.custom = false;
+}
+
+const pick = (bi) => { const b = state.breaks[bi]; const oi = state.chosen[bi]; return b.opts[oi >= 0 ? oi : 0]; };
+function coveredBy(bi) {
+  const a = state.breaks[bi].anchor;
+  return state.breaks.findIndex((b, j) => j !== bi && state.chosen[j] >= 0 && b.opts[state.chosen[j]].s <= a && b.opts[state.chosen[j]].e >= a);
+}
+function overlaps() {
+  const picks = state.breaks.map((b, i) => (state.chosen[i] >= 0 ? { i, o: b.opts[state.chosen[i]] } : null)).filter(Boolean);
+  const out = [];
+  for (let x = 0; x < picks.length; x++) for (let y = x + 1; y < picks.length; y++) {
+    if (picks[x].o.s <= picks[y].o.e && picks[y].o.s <= picks[x].o.e) out.push([picks[x].i, picks[y].i]);
+  }
+  return out;
+}
+
+/* ---------- weather + verdict ---------- */
+async function weatherFor(o) {
+  const fc = state.forecast;
+  const fcDays = fc?.destinations?.[0]?.days || [];
+  const fcLast = fcDays.length ? fcDays[fcDays.length - 1].date : null;
+  if (fcLast && o.start <= fcLast) {
+    return {
+      mode: "forecast",
+      partial: o.end > fcLast,
+      fcLast,
+      dests: fc.destinations.map((d) => ({ ...d, days: d.days.filter((x) => x.date >= o.start && x.date <= o.end) })),
+    };
+  }
+  if (!state.lastYear.has(o.id)) {
+    state.lastYear.set(o.id, loadLastYear(o.start, o.end).catch((e) => { state.lastYear.delete(o.id); throw e; }));
+  }
+  const ly = await state.lastYear.get(o.id);
+  return { mode: "lastyear", forecastFrom: addDays(o.start, -15), dests: ly.destinations };
+}
+
+function judge(w) {
+  const scored = w.dests.map((d) => {
+    const n = d.days.length || 1;
+    if (w.mode === "forecast") {
+      const avg = d.days.reduce((a, x) => a + (x.rainProb ?? 0), 0) / n;
+      const wet = d.days.filter((x) => (x.rainProb ?? 0) >= 60 || (x.rainMm ?? 0) >= 5).length;
+      return { ...d, avg, wet, score: avg };
+    }
+    const wet = d.days.filter((x) => (x.rainMm ?? 0) >= 5).length;
+    const mm = d.days.reduce((a, x) => a + (x.rainMm ?? 0), 0);
+    return { ...d, wet, mm, score: (wet / n) * 100 + mm / 10 };
+  }).sort((a, b) => a.score - b.score);
+  const best = scored[0];
+  const n = best.days.length || 1;
+  const level = w.mode === "forecast"
+    ? (best.avg < 35 ? "go" : best.avg < 60 ? "maybe" : "wet")
+    : (best.wet / n <= 0.34 ? "go" : best.wet / n <= 0.67 ? "maybe" : "wet");
+  return { best, level, n };
+}
+
+function verdictHTML(j, w, o) {
+  const { best, level, n } = j;
+  let title, why;
+  if (w.mode === "forecast") {
+    title = { go: "Go", maybe: "Go, but pack an umbrella", wet: "Expect a wet trip" }[level];
+    why = `Average chance of rain in ${esc(best.name)}: ${Math.round(best.avg)}% across ${plural(n, "day")}${w.partial ? `. The forecast only reaches ${short(w.fcLast)}, so check again closer to the date` : ""}.`;
+  } else {
+    title = { go: "Good odds", maybe: "Mixed odds", wet: "Often wet on these dates" }[level];
+    why = `This isn't a forecast yet. On the same dates last year, ${esc(best.name)} had ${plural(best.wet, "rainy day")} out of ${n}. The real forecast opens on ${short(w.forecastFrom)}.`;
+  }
+  return `<div class="sign verdict ${level}"><p class="sign-kicker">Verdict</p><p class="sign-title">${title}</p><p>${why}</p></div>
+    <dl class="facts">
+      <div><dt>Best bet</dt><dd>${esc(best.name)}</dd></div>
+      <div><dt>Cross at</dt><dd>${CHECKPOINT[best.checkpoint]}</dd></div>
+      <div><dt>Apply for leave</dt><dd>${o.leave ? o.leaveDates.map(short).join(", ") : "None needed"}</dd></div>
+    </dl>
+    <p class="hint">Long weekends usually bring heavy traffic at both checkpoints. Check the live cameras below before you set off.</p>`;
+}
+
+function wxTable(w, caption, bestId) {
+  const dates = w.dests[0]?.days.map((x) => x.date) || [];
+  if (!dates.length) return `<p class="muted">No weather data for these dates.</p>`;
+  const cell = (x) => {
+    if (w.mode === "forecast") {
+      const p = x.rainProb ?? 0;
+      return `<td><span class="bar" style="--p:${p}%"></span><b>${p}%</b><small>${wmo(x.code)} · ${Math.round(x.tmax)}°</small></td>`;
+    }
+    const mm = x.rainMm ?? 0;
+    return `<td><span class="bar" style="--p:${Math.min(100, mm * 5)}%"></span><b>${mm.toFixed(1)} mm</b><small>${wmo(x.code)} · ${Math.round(x.tmax)}°</small></td>`;
+  };
+  return `<div class="wx-wrap"><table class="wx">
+    <caption>${caption}</caption>
+    <thead><tr><th scope="col">Destination</th>${dates.map((d) => `<th scope="col">${short(d)}</th>`).join("")}</tr></thead>
+    <tbody>${w.dests.map((d) => `<tr class="${d.id === bestId ? "best" : ""}"><th scope="row">${esc(d.name)}<small>via ${d.checkpoint === "tuas" ? "Tuas" : "Woodlands"}</small></th>${d.days.map(cell).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+async function loadVerdict(o) {
+  const token = `${state.selected}:${o.id}`;
+  state.verdictToken = token;
+  try {
+    const w = await weatherFor(o);
+    if (state.verdictToken !== token) return;
+    const j = judge(w);
+    $("#verdict").innerHTML = verdictHTML(j, w, o);
+    const caption = w.mode === "forecast"
+      ? "Chance of rain each day · Open-Meteo forecast"
+      : "Rain on the same dates last year · Open-Meteo archive";
+    $("#wx").innerHTML = wxTable(w, caption, j.best.id);
+  } catch (e) {
+    if (state.verdictToken !== token) return;
+    $("#verdict").innerHTML = `<div class="sign verdict wet"><p class="sign-kicker">Verdict</p><p class="sign-title">Weather unavailable</p><p>${esc(e.message)}</p></div>`;
+    $("#wx").innerHTML = "";
+  }
+}
+
+/* ---------- rendering ---------- */
+function strip(o) {
+  const from = Math.max(0, o.s - 1);
+  const to = Math.min(state.days.length - 1, o.e + 1);
+  return `<ol class="strip">${state.days.slice(from, to + 1).map((d, k) => {
+    const i = from + k;
+    const inside = i >= o.s && i <= o.e;
+    const type = d.hol ? "hol" : d.off ? "wkd" : inside ? "leave" : "work";
+    const what = d.hol ? d.hol : d.off ? "Weekend" : inside ? "Take leave" : "Work day";
+    return `<li class="day ${type}${inside ? "" : " out"}" title="${esc(`${short(d.date)} · ${what}`)}"><span>${parse(d.date).toLocaleDateString("en-SG", { weekday: "short" })}</span><b>${parse(d.date).getDate()}</b></li>`;
+  }).join("")}</ol>`;
+}
+
+function chips(bi) {
+  const b = state.breaks[bi];
+  return `<div class="chips">${b.opts.map((o, oi) => {
+    const on = state.chosen[bi] === oi;
+    const ratio = o.leave ? `<small>${(o.len / o.leave).toFixed(1)} days per leave</small>` : `<small>free</small>`;
+    return `<button type="button" class="chip" data-bi="${bi}" data-oi="${oi}" aria-pressed="${on}"><b>${o.leave}</b> leave → <b>${o.len}</b> days ${ratio}</button>`;
+  }).join("")}</div>`;
+}
+
+function renderHero() {
+  const hero = $("#hero");
+  const b = state.breaks[state.selected];
+  if (!b) {
+    hero.innerHTML = `<p class="muted">No Singapore public holidays found in the next 12 months.</p>`;
+    return;
+  }
+  const o = pick(state.selected);
+  const inDays = daysBetween(state.today, o.start);
+  const isNext = state.selected === 0;
+  hero.innerHTML = `
+    <div class="hero-main">
+      <p class="kicker">${isNext ? "Next escape" : "Selected escape"} · ${inDays <= 0 ? "starts today" : `starts in ${plural(inDays, "day")}`}</p>
+      <h2>${esc(b.name)}</h2>
+      <p class="hero-dates">${range(o.start, o.end)} · <b>${o.len} days off</b> for ${o.leave ? `<b>${plural(o.leave, "leave day")}</b>` : "<b>no leave</b>"}</p>
+      ${o.hols.length > 1 ? `<p class="muted">This stretch also covers ${esc(o.hols.filter((h) => !b.name.includes(h)).join(" and "))}.</p>` : ""}
+      ${strip(o)}
+      <p class="label">How long do you want to go?</p>
+      ${chips(state.selected)}
+    </div>
+    <div class="hero-side" id="verdict"><div class="sign verdict pending"><p class="sign-kicker">Verdict</p><p>Checking the weather for ${range(o.start, o.end)}…</p></div></div>
+    <div class="wx-area" id="wx"></div>`;
+  loadVerdict(o);
+}
+
+function renderSummary() {
+  const picks = state.breaks.map((b, i) => (state.chosen[i] >= 0 ? b.opts[state.chosen[i]] : null)).filter(Boolean);
+  const leave = picks.reduce((a, o) => a + o.leave, 0);
+  const off = picks.reduce((a, o) => a + o.len, 0);
+  const base = state.breaks.reduce((a, b) => a + b.opts[0].len, 0);
+  const warns = [];
+  if (leave > state.budget) warns.push(`That's ${leave - state.budget} more leave than your budget of ${state.budget}.`);
+  if (overlaps().length) warns.push("Some of your picks overlap. Pick a shorter option for one of them.");
+  $("#planSummary").innerHTML = `<p>Spend <b>${plural(leave, "leave day")}</b> → get <b>${off} days off</b> across ${plural(picks.length, "break")}. That's ${off - base} more days off than the long weekends alone.
+    ${state.custom ? `<button type="button" class="textbtn" id="reset">Back to the best plan</button>` : `<span class="pill">Best plan for ${state.budget} leave</span>`}
+    ${warns.map((w) => `<span class="warn">${w}</span>`).join("")}</p>`;
+  const reset = $("#reset");
+  if (reset) reset.onclick = () => { optimise(); renderAll(); };
+}
+
+function renderBreaks() {
+  $("#breaks").innerHTML = state.breaks.map((b, bi) => {
+    const o = pick(bi);
+    const cov = state.chosen[bi] < 0 ? coveredBy(bi) : -1;
+    const inDays = daysBetween(state.today, o.start);
+    const note = state.chosen[bi] >= 0
+      ? (o.leave ? `<p class="note">Apply for: ${o.leaveDates.map(short).join(", ")}</p>` : `<p class="note">No leave needed.</p>`)
+      : cov >= 0 ? `<p class="note">Already inside your ${esc(state.breaks[cov].name)} break.</p>` : `<p class="note">Not in your plan. Pick an option to add it.</p>`;
+    return `<article class="break${bi === state.selected ? " is-selected" : ""}${cov >= 0 ? " is-covered" : ""}">
+      <div class="break-head">
+        <div><h3>${esc(b.name)}</h3><p class="when">${range(o.start, o.end)} · ${inDays <= 0 ? "now" : `in ${plural(inDays, "day")}`}</p></div>
+        <button type="button" class="open" data-open="${bi}">Weather &amp; verdict</button>
+      </div>
+      ${strip(o)}
+      ${chips(bi)}
+      ${note}
+    </article>`;
+  }).join("");
+}
+
+function renderAll() {
+  renderSummary();
+  renderBreaks();
+  renderHero();
+}
+
+function renderWeekend() {
+  const el = $("#weekend");
+  if (!state.forecast) { el.innerHTML = errorHTML("The forecast didn't load.", "forecast"); return; }
+  let d = state.today;
+  while (![0, 6].includes(parse(d).getDay())) d = addDays(d, 1);
+  const dates = parse(d).getDay() === 6 ? [d, addDays(d, 1)] : [d];
+  const w = { mode: "forecast", dests: state.forecast.destinations.map((x) => ({ ...x, days: x.days.filter((y) => dates.includes(y.date)) })) };
+  el.innerHTML = wxTable(w, `Chance of rain · ${range(dates[0], dates[dates.length - 1])}`, judge(w).best.id);
+}
+
+async function loadCams() {
+  const el = $("#cams");
+  try {
+    const j = await loadCamData();
+    const groups = { woodlands: "Woodlands · for JB city and Desaru", tuas: "Tuas Second Link · for Legoland and Malacca" };
+    const cam = (c) => {
+      const t = new Date(c.timestamp);
+      const ago = Math.max(0, Math.round((Date.now() - t) / 60000));
+      return `<figure class="cam"><a href="${esc(c.image)}" target="_blank" rel="noopener" title="Open full size"><img src="${esc(c.image)}" alt="Live traffic camera: ${esc(c.label)}" loading="lazy" width="1920" height="1080"></a>
+        <figcaption><b>${esc(c.label)}</b><span>Taken ${t.toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })} · ${ago < 1 ? "just now" : `${plural(ago, "min")} ago`}</span></figcaption></figure>`;
+    };
+    el.innerHTML = Object.entries(groups).map(([k, title]) => {
+      const list = j.cameras.filter((c) => c.checkpoint === k);
+      return `<div class="cam-group"><h3>${title}</h3><div class="cam-row">${list.map(cam).join("") || `<p class="muted">No image from this checkpoint right now.</p>`}</div></div>`;
+    }).join("");
+    $("#camMeta").textContent = `Live LTA cameras · refreshes every minute · last checked ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`;
+  } catch (e) {
+    el.innerHTML = errorHTML(e.message, "cams");
+    $("#camMeta").textContent = "";
+  }
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) {
+    const bi = +chip.dataset.bi;
+    state.chosen[bi] = +chip.dataset.oi;
+    state.custom = true;
+    renderSummary();
+    renderBreaks();
+    if (bi === state.selected) renderHero();
+    return;
+  }
+  const open = e.target.closest("[data-open]");
+  if (open) {
+    state.selected = +open.dataset.open;
+    renderBreaks();
+    renderHero();
+    $("#hero").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  const retry = e.target.closest("[data-retry]");
+  if (retry) {
+    if (retry.dataset.retry === "cams") loadCams();
+    else boot();
+  }
+});
+
+function setBudget(n) {
+  state.budget = Math.max(0, Math.min(40, Number.isFinite(n) ? Math.round(n) : 0));
+  $("#budget").value = state.budget;
+  try { localStorage.setItem("johor-escape-budget", String(state.budget)); } catch {}
+  if (!state.breaks.length) return;
+  optimise();
+  renderAll();
+}
+$("#bMinus").onclick = () => setBudget(state.budget - 1);
+$("#bPlus").onclick = () => setBudget(state.budget + 1);
+$("#budget").addEventListener("change", (e) => setBudget(Number(e.target.value)));
+
+/* ---------- start ---------- */
+async function boot() {
+  state.today = sgToday();
+  try { const saved = Number(localStorage.getItem("johor-escape-budget")); if (saved >= 0 && saved <= 40 && localStorage.getItem("johor-escape-budget") !== null) state.budget = saved; } catch {}
+  $("#budget").value = state.budget;
+
+  const [hol, fc] = await Promise.allSettled([loadHolidays(), loadForecast()]);
+  state.forecast = fc.status === "fulfilled" ? fc.value : null;
+  renderWeekend();
+
+  if (hol.status === "rejected") {
+    $("#hero").innerHTML = errorHTML(hol.reason.message, "boot");
+    return;
+  }
+  state.days = buildDays(hol.value);
+  state.breaks = buildBreaks();
+  state.selected = 0;
+  optimise();
+  renderAll();
+}
+
+boot();
+loadCams();
+setInterval(loadCams, 60000);
