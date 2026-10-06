@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Johor Escape</title>
+  <title>Dive Escape</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800;900&family=Overpass+Mono:wght@500;600&display=swap">
@@ -13,12 +13,12 @@
   <header class="gantry">
     <div class="gantry-inner">
       <div class="sign brand">
-        <span class="brand-arrow" aria-hidden="true">
-          <svg viewBox="0 0 40 40" width="40" height="40"><path d="M20 4 L34 18 H25 V36 H15 V18 H6 Z" fill="currentColor"/></svg>
+        <span class="dive-flag" aria-hidden="true">
+          <svg viewBox="0 0 48 36" width="48" height="36"><rect width="48" height="36" rx="3" fill="#D6262E"/><path d="M0 4 L4 0 L48 32 L44 36 Z" fill="#FFFFFF"/></svg>
         </span>
         <div>
-          <p class="sign-kicker">From CT Hub to</p>
-          <h1>Johor Escape</h1>
+          <p class="sign-kicker">From CT Hub, go</p>
+          <h1>Dive Escape</h1>
         </div>
       </div>
       <div class="budget">
@@ -37,6 +37,16 @@
       <p class="muted">Loading Singapore public holidays…</p>
     </section>
 
+    <section class="block" id="where">
+      <div class="sec-head">
+        <h2 id="monthTitle">Where to dive this month</h2>
+        <p class="muted">Pick a month. Malaysia comes first, since you can drive there.</p>
+      </div>
+      <div id="monthPicker" class="chips months" role="group" aria-label="Month"></div>
+      <div id="sites" class="sites"></div>
+      <p id="seasonSources" class="sources"></p>
+    </section>
+
     <section class="block">
       <div class="sec-head">
         <h2>Your year of breaks</h2>
@@ -53,11 +63,11 @@
 
     <section class="block">
       <div class="sec-head">
-        <h2>Crossing today?</h2>
+        <h2>Driving up today?</h2>
         <p id="camMeta" class="muted">Loading live checkpoint cameras…</p>
       </div>
       <div id="cams" class="cams"></div>
-      <h3 class="sub">This weekend's weather</h3>
+      <h3 class="sub">This weekend at the dive islands</h3>
       <div id="weekend"></div>
     </section>
   </main>
@@ -65,7 +75,8 @@
   <footer>
     <p><b>Data:</b> Singapore public holidays from <a href="https://date.nager.at" target="_blank" rel="noopener">Nager.Date</a> (observed dates; check <a href="https://www.mom.gov.sg/employment-practices/public-holidays" target="_blank" rel="noopener">MOM's official list</a> before you apply for leave).
     Forecasts and last year's weather from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>.
-    Live checkpoint cameras from LTA via <a href="https://data.gov.sg" target="_blank" rel="noopener">data.gov.sg</a>.</p>
+    Live checkpoint cameras from LTA via <a href="https://data.gov.sg" target="_blank" rel="noopener">data.gov.sg</a>.
+    Dive seasons are a guide only; sources are listed under "Where to dive".</p>
   </footer>
 
   <script src="app.js"></script>

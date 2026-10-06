@@ -1,8 +1,8 @@
 {
-  "name": "johor-escape",
-  "version": "1.0.0",
+  "name": "dive-escape",
+  "version": "2.0.0",
   "private": true,
-  "description": "Plan your next long weekend in Johor: fewest leave days, best weather, live checkpoint cameras.",
+  "description": "Plan dive trips around Singapore public holidays: fewest leave days, dive seasons by month, island weather, live Causeway cameras.",
   "scripts": {
     "start": "node server.js"
   },

@@ -15,6 +15,8 @@ const state = {
   forecast: null,
   lastYear: new Map(),
   verdictToken: "",
+  month: 0,           // month shown in "Where to dive" (1–12)
+  monthPinned: false, // true once the user picks a month themselves
 };
 
 /* ---------- helpers ---------- */
@@ -30,14 +32,72 @@ const range = (a, b) => (a === b ? short(a) : `${short(a)} – ${short(b)}`);
 const sgToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const wmo = (c) => c == null ? "–" : c === 0 ? "Clear" : c <= 2 ? "Partly cloudy" : c === 3 ? "Cloudy" : c <= 48 ? "Fog"
   : c <= 57 ? "Drizzle" : c <= 67 ? "Rain" : c <= 77 ? "Snow" : c <= 82 ? "Showers" : c <= 86 ? "Snow showers" : "Thunderstorms";
-const CHECKPOINT = { woodlands: "Woodlands (the Causeway)", tuas: "Tuas (the Second Link)" };
+const monthOf = (s) => Number(s.slice(5, 7));
+const monthName = (m) => parse(`2000-${String(m).padStart(2, "0")}-01`).toLocaleDateString("en-SG", { month: "long" });
+const openFor = (d, dates) => dates.every((s) => d.season.includes(monthOf(s)));
 
 /* ---------- data: called straight from the browser (all four APIs allow it, no keys) ---------- */
+// Malaysian dive islands you can reach over the Causeway. All four sit on the east coast,
+// which shuts for the northeast monsoon (resorts and boats stop, roughly Nov–Feb).
+const EAST_COAST_SEASON = [3, 4, 5, 6, 7, 8, 9, 10];
 const DESTINATIONS = [
-  { id: "jb", name: "Johor Bahru city", lat: 1.4655, lon: 103.7578, checkpoint: "woodlands" },
-  { id: "legoland", name: "Legoland & Puteri Harbour", lat: 1.4267, lon: 103.6297, checkpoint: "tuas" },
-  { id: "desaru", name: "Desaru Coast", lat: 1.5517, lon: 104.2520, checkpoint: "woodlands" },
-  { id: "malacca", name: "Malacca", lat: 2.1896, lon: 102.2501, checkpoint: "tuas" },
+  { id: "tioman", name: "Tioman Island", lat: 2.8167, lon: 104.1667, season: EAST_COAST_SEASON,
+    getting: "Drive across Woodlands to Mersing, then take the ferry." },
+  { id: "aur", name: "Pulau Aur & Dayang", lat: 2.4500, lon: 104.5167, season: EAST_COAST_SEASON,
+    getting: "Drive across Woodlands to Mersing, then a dive boat out (usually a 3-day trip)." },
+  { id: "redang", name: "Redang", lat: 5.7800, lon: 103.0100, season: EAST_COAST_SEASON,
+    getting: "Fly to Kuala Terengganu, or drive across Woodlands; ferry from Merang." },
+  { id: "perhentian", name: "Perhentian Islands", lat: 5.9100, lon: 102.7400, season: EAST_COAST_SEASON,
+    getting: "Fly to Kota Bharu, or drive across Woodlands; ferry from Kuala Besut." },
+];
+
+// Where to dive, month by month. "months" are the best months; seasons are typical, not guaranteed.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SITES = [
+  { place: "Tioman Island", country: "Malaysia", months: [3, 4, 5, 6, 7, 8, 9, 10], tripDays: 3,
+    animals: "Green and hawksbill turtles, blacktip reef sharks, nudibranchs",
+    season: "Mar–Oct. Closed for the monsoon Nov–Feb.", how: "Drive via Woodlands, ferry from Mersing" },
+  { place: "Pulau Aur & Dayang", country: "Malaysia", months: [3, 4, 5, 6, 7, 8, 9, 10], tripDays: 3,
+    animals: "Offshore pinnacles with big schools of fish and passing pelagics",
+    season: "Mar–Oct, same monsoon closure as Tioman.", how: "Drive via Woodlands, dive boat from Mersing" },
+  { place: "Perhentian & Redang", country: "Malaysia", months: [3, 4, 5, 6, 7, 8, 9, 10], tripDays: 4,
+    animals: "Turtles, blacktip reef sharks, easy reef dives",
+    season: "Mar–Oct, peak May–Aug. Closed Nov–Feb.", how: "Fly to Kota Bharu or Kuala Terengganu, or a long drive via Woodlands" },
+  { place: "Sipadan", country: "Malaysia (Sabah)", months: [4, 5, 6, 7, 8, 9, 10], tripDays: 5,
+    animals: "Barracuda tornado, schools of jacks, turtles on almost every dive",
+    season: "Year-round, best Apr–Oct. Has closed for a conservation break in Nov; daily permits are limited.", how: "Fly to Tawau, transfer to Semporna" },
+  { place: "Layang-Layang", country: "Malaysia (Sabah)", months: [3, 4, 5, 6, 7, 8], tripDays: 6,
+    animals: "Schools of scalloped hammerhead sharks (best Apr–May)",
+    season: "Mar–Aug only. The island's one resort closes the rest of the year.", how: "Fly to Kota Kinabalu, then a charter flight" },
+  { place: "Similan Islands", country: "Thailand", months: [11, 12, 1, 2, 3, 4], tripDays: 5,
+    animals: "Manta rays, a chance of whale sharks, big granite reefs",
+    season: "Nov–Apr. The national park closes in the wet season.", how: "Fly to Phuket, then a liveaboard" },
+  { place: "Raja Ampat", country: "Indonesia", months: [10, 11, 12, 1, 2, 3, 4], tripDays: 10,
+    animals: "Manta rays, wobbegong sharks, the richest reefs on Earth",
+    season: "Oct–Apr is the prime season.", how: "Fly to Sorong via Jakarta or Makassar" },
+  { place: "Komodo", country: "Indonesia", months: [4, 5, 6, 7, 8, 9, 10, 11], tripDays: 6,
+    animals: "Manta rays, reef sharks, fast drift dives",
+    season: "Apr–Nov for the best conditions; best Jun–Oct.", how: "Fly to Labuan Bajo via Bali or Jakarta" },
+  { place: "Nusa Penida, Bali", country: "Indonesia", months: [7, 8, 9, 10], tripDays: 4,
+    animals: "Mola mola (oceanic sunfish), plus manta rays all year",
+    season: "Mola mola Jul–Oct, most reliable Jul–Sep. Cold water: bring a thicker wetsuit.", how: "Fly to Bali, boat to Nusa Penida" },
+  { place: "Tubbataha Reefs", country: "Philippines", months: [3, 4, 5, 6], tripDays: 8,
+    animals: "Reef sharks, whale sharks, hammerheads, huge schools of jacks",
+    season: "Only mid-Mar to mid-Jun, liveaboard only.", how: "Fly to Puerto Princesa, then a liveaboard" },
+  { place: "Malapascua", country: "Philippines", months: [11, 12, 1, 2, 3, 4, 5], tripDays: 5,
+    animals: "Thresher sharks at dawn on Monad Shoal (seen year-round)",
+    season: "Dry season Nov–May; peak threshers Jan–Apr.", how: "Fly to Cebu, drive north, boat across" },
+  { place: "Ningaloo Reef", country: "Australia", months: [3, 4, 5, 6, 7, 8], tripDays: 6,
+    animals: "Swim with whale sharks (snorkel trips), plus reef dives",
+    season: "Whale sharks Mar–Aug.", how: "Fly to Perth, then Exmouth" },
+];
+const SEASON_SOURCES = [
+  ["DivePlanit: Tioman & Perhentian", "https://www.diveplanit.com/destination/tioman-island"],
+  ["PADI: mantas by month", "https://blog.padi.com/best-places-to-dive-with-manta-rays-by-month/"],
+  ["Dive The World: Sipadan", "https://www.dive-the-world.com/posts/sipadan/best-time-for-sipadan-diving-optimal-conditions.php"],
+  ["Underwater Asia: Layang-Layang", "https://underwaterasia.info/malaysia/layang-layang-diving"],
+  ["Liveaboard.com: Malapascua", "https://www.liveaboard.com/diving/season-calendar/best-time-to-dive-in-malapascua"],
+  ["Ocean Earth Travels: Bali mola mola", "https://www.oceanearthtravels.com/scuba-diving/mola-mola-diving-bali-season"],
 ];
 // LTA traffic cameras at the two land checkpoints (IDs from the data.gov.sg feed).
 const CAMERAS = {
@@ -261,7 +321,9 @@ async function weatherFor(o) {
 }
 
 function judge(w) {
-  const scored = w.dests.map((d) => {
+  const open = w.dests.filter((d) => openFor(d, d.days.map((x) => x.date)));
+  if (!open.length) return { best: null, level: "closed", n: w.dests[0]?.days.length || 0 };
+  const scored = open.map((d) => {
     const n = d.days.length || 1;
     if (w.mode === "forecast") {
       const avg = d.days.reduce((a, x) => a + (x.rainProb ?? 0), 0) / n;
@@ -282,10 +344,18 @@ function judge(w) {
 
 function verdictHTML(j, w, o) {
   const { best, level, n } = j;
+  const leave = `<div><dt>Apply for leave</dt><dd>${o.leave ? o.leaveDates.map(short).join(", ") : "None needed"}</dd></div>`;
+  if (level === "closed") {
+    const m = monthName(monthOf(o.start));
+    return `<div class="sign verdict wet"><p class="sign-kicker">Verdict</p><p class="sign-title">Malaysia's islands are closed</p>
+      <p>Tioman, Aur, Redang and the Perhentians shut for the northeast monsoon, roughly November to February. Fly somewhere that's in season instead.</p></div>
+      <dl class="facts">${leave}</dl>
+      <p class="hint"><a href="#where">See where to dive in ${m}</a>.</p>`;
+  }
   let title, why;
   if (w.mode === "forecast") {
-    title = { go: "Go", maybe: "Go, but pack an umbrella", wet: "Expect a wet trip" }[level];
-    why = `Average chance of rain in ${esc(best.name)}: ${Math.round(best.avg)}% across ${plural(n, "day")}${w.partial ? `. The forecast only reaches ${short(w.fcLast)}, so check again closer to the date` : ""}.`;
+    title = { go: "Go diving", maybe: "Go, but expect some rain", wet: "Expect a wet trip" }[level];
+    why = `Average chance of rain at ${esc(best.name)}: ${Math.round(best.avg)}% across ${plural(n, "day")}${w.partial ? `. The forecast only reaches ${short(w.fcLast)}, so check again closer to the date` : ""}.`;
   } else {
     title = { go: "Good odds", maybe: "Mixed odds", wet: "Often wet on these dates" }[level];
     why = `This isn't a forecast yet. On the same dates last year, ${esc(best.name)} had ${plural(best.wet, "rainy day")} out of ${n}. The real forecast opens on ${short(w.forecastFrom)}.`;
@@ -293,10 +363,10 @@ function verdictHTML(j, w, o) {
   return `<div class="sign verdict ${level}"><p class="sign-kicker">Verdict</p><p class="sign-title">${title}</p><p>${why}</p></div>
     <dl class="facts">
       <div><dt>Best bet</dt><dd>${esc(best.name)}</dd></div>
-      <div><dt>Cross at</dt><dd>${CHECKPOINT[best.checkpoint]}</dd></div>
-      <div><dt>Apply for leave</dt><dd>${o.leave ? o.leaveDates.map(short).join(", ") : "None needed"}</dd></div>
+      <div><dt>Getting there</dt><dd>${esc(best.getting)}</dd></div>
+      ${leave}
     </dl>
-    <p class="hint">Long weekends usually bring heavy traffic at both checkpoints. Check the live cameras below before you set off.</p>`;
+    <p class="hint">Long weekends usually bring heavy traffic at the Causeway. Check the live cameras below before you set off. Don't fly within 18 hours of your last dive.</p>`;
 }
 
 function wxTable(w, caption, bestId) {
@@ -312,8 +382,11 @@ function wxTable(w, caption, bestId) {
   };
   return `<div class="wx-wrap"><table class="wx">
     <caption>${caption}</caption>
-    <thead><tr><th scope="col">Destination</th>${dates.map((d) => `<th scope="col">${short(d)}</th>`).join("")}</tr></thead>
-    <tbody>${w.dests.map((d) => `<tr class="${d.id === bestId ? "best" : ""}"><th scope="row">${esc(d.name)}<small>via ${d.checkpoint === "tuas" ? "Tuas" : "Woodlands"}</small></th>${d.days.map(cell).join("")}</tr>`).join("")}</tbody>
+    <thead><tr><th scope="col">Dive island</th>${dates.map((d) => `<th scope="col">${short(d)}</th>`).join("")}</tr></thead>
+    <tbody>${w.dests.map((d) => {
+      const open = openFor(d, dates);
+      return `<tr class="${d.id === bestId ? "best" : ""}${open ? "" : " closed"}"><th scope="row">${esc(d.name)}<small>${open ? "In season" : "Closed: monsoon"}</small></th>${d.days.map(cell).join("")}</tr>`;
+    }).join("")}</tbody>
   </table></div>`;
 }
 
@@ -328,7 +401,7 @@ async function loadVerdict(o) {
     const caption = w.mode === "forecast"
       ? "Chance of rain each day · Open-Meteo forecast"
       : "Rain on the same dates last year · Open-Meteo archive";
-    $("#wx").innerHTML = wxTable(w, caption, j.best.id);
+    $("#wx").innerHTML = wxTable(w, caption, j.best?.id);
   } catch (e) {
     if (state.verdictToken !== token) return;
     $("#verdict").innerHTML = `<div class="sign verdict wet"><p class="sign-kicker">Verdict</p><p class="sign-title">Weather unavailable</p><p>${esc(e.message)}</p></div>`;
@@ -370,7 +443,7 @@ function renderHero() {
   const isNext = state.selected === 0;
   hero.innerHTML = `
     <div class="hero-main">
-      <p class="kicker">${isNext ? "Next escape" : "Selected escape"} · ${inDays <= 0 ? "starts today" : `starts in ${plural(inDays, "day")}`}</p>
+      <p class="kicker">${isNext ? "Next dive trip" : "Selected trip"} · ${inDays <= 0 ? "starts today" : `starts in ${plural(inDays, "day")}`}</p>
       <h2>${esc(b.name)}</h2>
       <p class="hero-dates">${range(o.start, o.end)} · <b>${o.len} days off</b> for ${o.leave ? `<b>${plural(o.leave, "leave day")}</b>` : "<b>no leave</b>"}</p>
       ${o.hols.length > 1 ? `<p class="muted">This stretch also covers ${esc(o.hols.filter((h) => !b.name.includes(h)).join(" and "))}.</p>` : ""}
@@ -381,6 +454,52 @@ function renderHero() {
     <div class="hero-side" id="verdict"><div class="sign verdict pending"><p class="sign-kicker">Verdict</p><p>Checking the weather for ${range(o.start, o.end)}…</p></div></div>
     <div class="wx-area" id="wx"></div>`;
   loadVerdict(o);
+  if (!state.monthPinned) { state.month = monthOf(o.start); renderMonth(); }
+}
+
+/* ---------- where to dive, by month ---------- */
+// The cheapest break in month m that's long enough for the trip, or a rough leave estimate if none.
+function fitFor(site, m) {
+  let best = null;
+  state.breaks.forEach((b, bi) => b.opts.forEach((o, oi) => {
+    if (o.len < site.tripDays || (monthOf(o.start) !== m && monthOf(o.end) !== m)) return;
+    if (!best || o.leave < best.o.leave || (o.leave === best.o.leave && o.start < best.o.start)) best = { b, bi, oi, o };
+  }));
+  if (best) {
+    return `<b>${best.o.leave ? plural(best.o.leave, "leave day") : "No leave"}</b> over ${esc(best.b.name)}, ${range(best.o.start, best.o.end)}.
+      <button type="button" class="textbtn" data-open="${best.bi}" data-oi="${best.oi}">Plan this</button>`;
+  }
+  return `<b>${plural(leaveWithoutHoliday(site.tripDays), "leave day")}</b> if you start on a Saturday. No public holiday helps in ${MONTHS[m - 1]}.`;
+}
+
+// Fewest leave days for an n-day trip with no public holiday: start on Saturday and use every weekend.
+function leaveWithoutHoliday(n) {
+  let work = 0;
+  for (let k = 0; k < n; k++) if (![6, 0].includes((6 + k) % 7)) work++;
+  return work;
+}
+
+function renderMonth() {
+  const m = state.month;
+  if (!m) return;
+  const sites = SITES.filter((s) => s.months.includes(m))
+    .sort((a, b) => (a.country.startsWith("Malaysia") ? 0 : 1) - (b.country.startsWith("Malaysia") ? 0 : 1) || a.tripDays - b.tripDays);
+  $("#monthPicker").innerHTML = MONTHS.map((n, i) =>
+    `<button type="button" class="chip month" data-month="${i + 1}" aria-pressed="${i + 1 === m}">${n}</button>`).join("");
+  $("#monthTitle").textContent = `Where to dive in ${monthName(m)}`;
+  $("#sites").innerHTML = sites.length ? sites.map((s) => `
+    <article class="site">
+      <p class="country">${esc(s.country)}</p>
+      <h3>${esc(s.place)}</h3>
+      <p class="animals">${esc(s.animals)}</p>
+      <dl class="site-facts">
+        <div><dt>Season</dt><dd>${esc(s.season)}</dd></div>
+        <div><dt>Trip</dt><dd>${s.tripDays} days</dd></div>
+        <div><dt>Getting there</dt><dd>${esc(s.how)}</dd></div>
+        <div><dt>Leave</dt><dd>${fitFor(s, m)}</dd></div>
+      </dl>
+    </article>`).join("") : `<p class="muted">No sites in this guide are at their best in ${monthName(m)}.</p>`;
+  $("#seasonSources").innerHTML = `Seasons are typical, not guaranteed. Check with your dive operator before you book. Sources: ${SEASON_SOURCES.map(([t, u]) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`).join(", ")}.`;
 }
 
 function renderSummary() {
@@ -431,14 +550,14 @@ function renderWeekend() {
   while (![0, 6].includes(parse(d).getDay())) d = addDays(d, 1);
   const dates = parse(d).getDay() === 6 ? [d, addDays(d, 1)] : [d];
   const w = { mode: "forecast", dests: state.forecast.destinations.map((x) => ({ ...x, days: x.days.filter((y) => dates.includes(y.date)) })) };
-  el.innerHTML = wxTable(w, `Chance of rain · ${range(dates[0], dates[dates.length - 1])}`, judge(w).best.id);
+  el.innerHTML = wxTable(w, `Chance of rain · ${range(dates[0], dates[dates.length - 1])}`, judge(w).best?.id);
 }
 
 async function loadCams() {
   const el = $("#cams");
   try {
     const j = await loadCamData();
-    const groups = { woodlands: "Woodlands · for JB city and Desaru", tuas: "Tuas Second Link · for Legoland and Malacca" };
+    const groups = { woodlands: "Woodlands · for Mersing, Tioman, Aur and the east coast", tuas: "Tuas Second Link · for the west coast and KL" };
     const cam = (c) => {
       const t = new Date(c.timestamp);
       const ago = Math.max(0, Math.round((Date.now() - t) / 60000));
@@ -458,7 +577,7 @@ async function loadCams() {
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
-  const chip = e.target.closest(".chip");
+  const chip = e.target.closest(".chip[data-bi]");
   if (chip) {
     const bi = +chip.dataset.bi;
     state.chosen[bi] = +chip.dataset.oi;
@@ -468,9 +587,22 @@ document.addEventListener("click", (e) => {
     if (bi === state.selected) renderHero();
     return;
   }
+  const month = e.target.closest("[data-month]");
+  if (month) {
+    state.month = +month.dataset.month;
+    state.monthPinned = true;
+    renderMonth();
+    return;
+  }
   const open = e.target.closest("[data-open]");
   if (open) {
     state.selected = +open.dataset.open;
+    state.monthPinned = false;
+    if (open.dataset.oi !== undefined) {   // "Plan this" from the month guide picks that exact option
+      state.chosen[state.selected] = +open.dataset.oi;
+      state.custom = true;
+      renderSummary();
+    }
     renderBreaks();
     renderHero();
     $("#hero").scrollIntoView({ behavior: "smooth", block: "start" });
